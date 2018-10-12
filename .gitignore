@@ -48,3 +48,6 @@ CMakeLists.txt.user*
 #data directory
 /examples/icard11
 /images
+
+#include directory
+/include/bullet3
