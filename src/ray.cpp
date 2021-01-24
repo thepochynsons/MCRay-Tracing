@@ -8,7 +8,7 @@
 
 using namespace ray_physics;
 
-ray_physics::hit_result ray_physics::hit_boundary(const ray & r, const btVector3 & hit_point, const btVector3 & surface_normal, const mesh & collided_mesh)
+ray_physics::hit_result ray_physics::hit_boundary(const ray & r, const optix::float3 & hit_point, const optix::float3 & surface_normal, const mesh & collided_mesh)
 {
     // TODO: this logic can probably be simpler
     const material * material_after_vascularities = nullptr;
@@ -47,13 +47,13 @@ ray_physics::hit_result ray_physics::hit_boundary(const ray & r, const btVector3
     }();
     //power-cosine distribution random normal
     float random_angle = power_cosine_variate(material_after_collision.shininess); // par: s shininess : ( 0 = diffuse; inf = specular)
-    btVector3 random_normal = random_unit_vector(surface_normal, random_angle);
+    optix::float3 random_normal = random_unit_vector(surface_normal, random_angle);
     //
     //santi: reemplazo la normal de la superficie por la nueva normal random
-    btScalar incidence_angle = r.direction.dot(-random_normal); // cos theta_1
+    btScalar incidence_angle = optix::dot( r.direction, -random_normal); // cos theta_1
     if (incidence_angle < 0)
     {
-        incidence_angle = r.direction.dot(random_normal);
+        incidence_angle = optix::dot( r.direction, random_normal);
     }
     // santi: snell law
     const float refr_ratio = r.media.impedance / material_after_collision.impedance;
@@ -63,10 +63,10 @@ ray_physics::hit_result ray_physics::hit_boundary(const ray & r, const btVector3
     refraction_angle = std::sqrt(refraction_angle);
 
     auto refraction_direction = snells_law(r.direction, random_normal, incidence_angle, refraction_angle, refr_ratio);
-    refraction_direction = refraction_direction.normalized();
+    refraction_direction = optix::normalize( refraction_direction );
 
-    btVector3 reflection_direction = r.direction + 2*incidence_angle * random_normal;
-    reflection_direction = reflection_direction.normalized();
+    optix::float3 reflection_direction = r.direction + 2*incidence_angle * random_normal;
+    reflection_direction = optix::normalize( reflection_direction );
 
     const auto intensity_refl = total_internal_reflection ?
                                     r.intensity :
@@ -112,15 +112,15 @@ float ray_physics::max_ray_length(const ray & r)
     return 10.f /*<- cm to mm*/ * std::log(ray::intensity_epsilon/r.intensity) / -r.media.attenuation * r.frequency;
 }
 
-btVector3 ray_physics::snells_law(const btVector3 & ray_direction, const btVector3 & surface_normal, float incidence_angle, float refraction_angle, float refr_ratio)
+optix::float3 ray_physics::snells_law(const optix::float3 & ray_direction, const optix::float3 & surface_normal, float incidence_angle, float refraction_angle, float refr_ratio)
 {
     // For more details, read https://en.wikipedia.org/wiki/Snell%27s_law#Vector_form
-    const btVector3 & l = ray_direction;
-    const btVector3 & n = surface_normal;
+    const optix::float3 & l = ray_direction;
+    const optix::float3 & n = surface_normal;
     const float c = incidence_angle;
     const float r = refr_ratio;
 
-    return btVector3( r * l + (r*c - refraction_angle) * n );
+    return r * l + (r*c - refraction_angle) * n ;
 }
 
 float ray_physics::reflection_intensity(const float intensity_in, const float media_1, const float incidence_angle, const float media_2, const float refracted_angle)
@@ -151,12 +151,13 @@ float ray_physics::reflected_intensity(const float ray_intensity, const float in
     //return std::abs(specular_factor * impedance_factor * intensity); //C santi
     //return std::abs(specular_factor * intensity); //D santi
 }
-float ray_physics::reflected_intensity(const btVector3 direction, const btVector3 refraction_direction, const btVector3 reflection_direction, const material & colliding_media)
+
+float ray_physics::reflected_intensity(const optix::float3 direction, const optix::float3 refraction_direction, const optix::float3 reflection_direction, const material & colliding_media)
 {
     // Eq. 8 in Mattausch
-   float refraction_angle = direction.dot(refraction_direction);
+   float refraction_angle = optix::dot( direction, refraction_direction );
    const auto refraction_factor = std::pow(refraction_angle, colliding_media.specularity);
-   float reflection_angle = direction.dot(reflection_direction);
+   float reflection_angle = optix::dot( direction, reflection_direction );
    const auto reflection_factor = std::pow(reflection_angle, colliding_media.specularity);
   // std::cout << "refraction factor : " << refraction_factor << " reflection factor : " << reflection_factor << std::endl;
    return std::max(refraction_factor,(float)0.0) + std::max(reflection_factor,(float)0.0);
@@ -164,7 +165,7 @@ float ray_physics::reflected_intensity(const btVector3 direction, const btVector
 }
 
 // describes the determination of a random unit vector around v with given polar angle theta.
-btVector3 ray_physics::random_unit_vector(btVector3 v, float cos_theta)
+optix::float3 ray_physics::random_unit_vector(optix::float3 v, float cos_theta)
 {
     bool flag = false;
     float px, py,p;
@@ -182,13 +183,13 @@ btVector3 ray_physics::random_unit_vector(btVector3 v, float cos_theta)
         py = r * sin(a);
         p = px * px + py * py;
     } while (! (p <= 0.25) );
-    float vx = v.getX();
-    float vy = v.getY();
-    float vz = v.getZ();
+    float vx = v.x;
+    float vy = v.y;
+    float vz = v.z;
     if ( abs(vx) > abs(vy) )
     {
         vx = vy;
-        vy = v.getX();
+        vy = v.x;
         flag = true;
     }
     float b = 1 - vx * vx;
@@ -207,7 +208,7 @@ btVector3 ray_physics::random_unit_vector(btVector3 v, float cos_theta)
         wy = wx;
         wx = aux;
     }
-    return btVector3 (wx,wy,wz);
+    return optix::make_float3(wx,wy,wz);
 }
 
 float ray_physics::power_cosine_variate(int v)

@@ -4,9 +4,19 @@
 #include <opencv2/opencv.hpp>
 #include <opencv2/highgui/highgui.hpp>
 #include <array>
-#include <units/units.h>
+#include <units.h>
+
+#include <optixpp_namespace.h>
 
 #include "psf.h"
+
+
+
+
+#include <stdlib.h>
+#include <stdio.h>
+#include "string.h"
+
 
 /**
  * Radio-frequency image.
@@ -20,7 +30,7 @@ template <unsigned int columns, unsigned int max_travel_time /*μs*/, unsigned i
 class rf_image
 {
 public:
-    rf_image(units::length::millimeter_t radius, units::angle::radian_t angle) :
+    rf_image(units::length::millimeter_t radius, units::angle::radian_t angle, size_t samples) :
         intensities(max_rows, columns, CV_32FC1),
         conv_axial_buffer(max_rows, columns, CV_32FC1),
         scan_converted(400, 500, CV_32FC1)
@@ -28,21 +38,32 @@ public:
     {
         std::cout << "rf_image: " << max_rows << ", " << columns << std::endl;
         create_mapping(radius, angle, columns, max_rows);
+        samples_te = samples;
     }
 
     void add_echo(const unsigned int column, const float echo, const units::time::microsecond_t micros_from_source)
     {
         const units::dimensionless::dimensionless_t row = micros_from_source / (axial_resolution_ / speed_of_sound_);
-        if (row < max_rows)
+        //const unsigned int row = static_cast<unsigned int>(micros_from_source.to<float>());
+        if ( row.to<unsigned int>() < max_rows )
         {
-            intensities.at<float>(row, column) += echo;
+            if ((echo > 0)){
+                intensities.at<float>(row, column) += echo / samples_te;
+                iteration++;
+                //printf("%d,%d: %f\n", row, column, micros_from_source.to<float>());
+            }
         }
     }
+
+    int getIterations(){
+        return iteration;
+    }
+
 
     // get the delta time that represents a pixel (row resolution in time)
     constexpr units::time::microsecond_t get_dt() const
     {
-        return axial_resolution / speed_of_sound_;
+        return axial_resolution_ / speed_of_sound_;
     }
 
     constexpr units::time::microsecond_t micros_traveled(units::length::micrometer_t microm_from_source) const
@@ -69,7 +90,7 @@ public:
                     ascending = true;
                 }
                 else if (ascending)
-                // if it was ascending and now descended, we found a concave point at i
+                    // if it was ascending and now descended, we found a concave point at i
                 {
                     ascending = false;
                     const float new_peak = std::abs(intensities.at<float>(i, column));
@@ -78,7 +99,7 @@ public:
                     for (size_t j = last_peak_pos; j < i; j++)
                     {
                         const float alpha = (static_cast<float>(j) - static_cast<float>(last_peak_pos)) /
-                                            (static_cast<float>(i) - static_cast<float>(last_peak_pos));
+                                (static_cast<float>(i) - static_cast<float>(last_peak_pos));
 
                         intensities.at<float>(j, column) = last_peak * (1-alpha) + new_peak * alpha;
                     }
@@ -94,6 +115,7 @@ public:
     void convolve(const psf_ & p)
     {
         // Convolve using only axial kernel and store in intermediate buffer
+        //#pragma omp parallel for
         for (int col = 0; col < intensities.cols; col++) //each column is a different TE
         {
             for (int row = p.get_axial_size(); row < intensities.rows - p.get_axial_size(); row++) // each row holds information from along a ray
@@ -108,6 +130,7 @@ public:
         }
 
         // Convolve intermediate buffer using lateral kernel
+        //#pragma omp parallel for
         for (int row = p.get_axial_size(); row < conv_axial_buffer.rows - p.get_axial_size(); row++) // each row holds information from along a ray
         {
             for (int col = p.get_lateral_size() / 2; col < conv_axial_buffer.cols - p.get_lateral_size(); col++) //each column is a different TE
@@ -120,23 +143,29 @@ public:
                 intensities.at<float>(row,col) = convolution;
             }
         }
+
     }
+
 
     void postprocess()
     {
         double min, max;
+        //std::cout << intensities << std::endl;
         cv::minMaxLoc(intensities, &min, &max);
-
+        std::cout << "min: " << min << " - max: " << max <<std::endl;
         save("prelog.png");
-/*
         for (size_t i = 0; i < max_rows * columns; i++)
         {
-            intensities.at<float>(i) = std::log10(intensities.at<float>(i)+1)/std::log10(max+1);
+            //if (intensities.at<float>(i) != 0)
+            //    std::cout << intensities.at<float>(i) << " - " << max << std::endl;
+            intensities.at<float>(i) = std::log10(intensities.at<float>(i)+1)/std::log10((float)(max+1.));
         }
-*/
+
         // apply scan conversion using preprocessed mapping
         constexpr float invalid_color = 0.0f;
         cv::remap(intensities, scan_converted, map_y, map_x, CV_INTER_LINEAR, cv::BORDER_CONSTANT, cv::Scalar(invalid_color));
+
+        //std::cout << "Matrix: " << std::endl << scan_converted << std::endl;
     }
 
     void save(const std::string & filename) const
@@ -147,14 +176,47 @@ public:
         cv::imwrite(filename, out);
     }
 
+    int parseLine(char* line){
+        // This assumes that a digit will be found and the line ends in " Kb".
+        int i = strlen(line);
+        const char* p = line;
+        while (*p <'0' || *p > '9') p++;
+        line[i-3] = '\0';
+        i = atoi(p);
+        return i;
+    }
+
+    int getValue(){ //Note: this value is in KB!
+        FILE* file = fopen("/proc/self/status", "r");
+        int result = -1;
+        char line[128];
+
+        while (fgets(line, 128, file) != NULL){
+            if (strncmp(line, "VmRSS:", 6) == 0){
+                result = parseLine(line);
+                break;
+            }
+        }
+        fclose(file);
+        return result;
+    }
+
+
     void show() const
     {
         cv::namedWindow("Scan Converted", cv::WINDOW_AUTOSIZE );
         cv::imshow("Scan Converted", scan_converted );
-        save("/home/santiago/Proyectos/burger/burgercpp/images/mattausch.jpg");
-       // cv::imshow("Scan Converted", intensities );
+        std::string filename = "/home/santiago/Imágenes/optix_";//"/home/santiago/Proyectos/burger/burgercpp/images/optix_mattausch_";
+        filename.append(std::to_string(samples_te));
+        filename.append(".png");
+        save(filename);
+        //cv::imshow("Scan Converted", intensities );
 
+        std::cout << "RAM Usage: " << getValue()/1024 << "MB" <<std::endl;
         cv::waitKey(0);
+        std::cout << "RAM Usage: " << getValue()/1024 << "MB" <<std::endl;
+
+
 
     }
 
@@ -183,7 +245,7 @@ private:
     void create_mapping(units::length::millimeter_t radius, units::angle::radian_t total_angle, unsigned int rf_width, unsigned int rf_height)
     {
         // ratio to convert from mm to px
-        float ratio = (max_travel_time * speed_of_sound * 0.001f + radius.to<float>() - radius.to<float>() * std::cos(total_angle.to<float>()/2.0)) / scan_converted.rows;
+        float ratio = (max_travel_time * speed_of_sound * 0.001f + radius.to<float>() - radius.to<float>() * std::cos(total_angle.to<float>()/2.0f)) / scan_converted.rows;
 
         // distance to transducer center going from the edge of the scan_converted image
         units::length::millimeter_t shift_y = radius * std::cos(total_angle.to<float>() / 2.0f);
@@ -218,6 +280,9 @@ private:
     cv::Mat scan_converted;
     cv::Mat conv_axial_buffer;
     float * usFrame = nullptr;
+    int samples_te;
+
+    int iteration = 0;
 
     // Mapping used for scan conversion
     cv::Mat map_x, map_y;

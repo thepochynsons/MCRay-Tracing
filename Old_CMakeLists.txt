@@ -1,0 +1,170 @@
+project(mattausch)
+
+cmake_minimum_required(VERSION 3.2.0)
+
+# C++14 support
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fopenmp -std=c++14 -fpermissive")
+
+# Sources
+set (mattausch_SRC
+        "src/main.cpp"
+        "src/mesh.h"
+        #"src/scene.cpp"
+        "src/objloader.h"
+        #"src/ray.cpp"
+        "src/rfimage.h"
+        "src/psf.h"
+        "src/transducer.h"
+        "src/volume.h"
+        "src/camera.h"
+        "src/ray_gen.cu"
+        "src/random.cu"
+        )
+        #"src/wavefront/tiny_obj_loader.cpp")
+
+add_executable(mattausch ${mattausch_SRC})
+
+find_package(CUDA 5.0 REQUIRED)
+
+# Bullet includes
+set(BULLET_SRC_DIR "" CACHE PATH "")
+set(BULLET_LIB_DIR "" CACHE PATH "")
+message("Bullet source directory: ${BULLET_SRC_DIR}")
+message("Bullet lib directory: ${BULLET_LIB_DIR}")
+include_directories(${BULLET_SRC_DIR})
+
+target_link_libraries(mattausch
+    ${BULLET_LIB_DIR}/libBullet3Common.a
+    ${BULLET_LIB_DIR}/libBulletDynamics.a
+    ${BULLET_LIB_DIR}/libBulletCollision.a
+    ${BULLET_LIB_DIR}/libLinearMath.a
+    )
+
+# OpenCV
+find_package(OpenCV REQUIRED)
+if (OpenCV_FOUND)
+  target_link_libraries(mattausch ${OpenCV_LIBS})
+endif()
+
+# Include other stuff, like Units
+set(SAMPLES_PTX_DIR "${CMAKE_BINARY_DIR}/lib/ptx")
+set(SAMPLES_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+
+set(CUDA_GENERATED_OUTPUT_DIR ${SAMPLES_PTX_DIR})
+
+if (WIN32)
+  string(REPLACE "/" "\\\\" SAMPLES_PTX_DIR ${SAMPLES_PTX_DIR})
+else (WIN32)
+  if ( USING_GNU_C AND NOT APPLE)
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DM_PI=3.14159265358979323846" )
+  endif()
+endif (WIN32)
+
+# NVRTC include paths relative to the sample path
+set(SAMPLES_RELATIVE_INCLUDE_DIRS "\\
+  \"include/sutil\", \\
+  \"/cuda\", ")
+# NVRTC absolute include paths to the headers used to build the samples
+set(SAMPLES_ABSOLUTE_INCLUDE_DIRS "\\
+  \"${OptiX_INCLUDE}\", \\
+  \"${OptiX_INCLUDE}/optixu\", \\
+  \"${CMAKE_CURRENT_SOURCE_DIR}/support/mdl-sdk/include\", \\
+  \"${CUDA_INCLUDE_DIRS}\", ")
+
+# Build a null-terminated option list for NVRTC
+set(CUDA_NVRTC_OPTIONS)
+foreach(flag ${CUDA_NVRTC_FLAGS})
+  set(CUDA_NVRTC_OPTIONS "${CUDA_NVRTC_OPTIONS} \\\n  \"${flag}\",")
+endforeach()
+set(CUDA_NVRTC_OPTIONS "${CUDA_NVRTC_OPTIONS} \\\n  0,")
+
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/sampleConfig.h.in ${CMAKE_CURRENT_BINARY_DIR}/sampleConfig.h @ONLY)
+
+# Path to sutil.h that all the samples need
+include_directories( ${CMAKE_SOURCE_DIR}/sutil
+                     ${CMAKE_SOURCE_DIR}
+                     ${OptiX_INCLUDE}
+                     ${OptiX_INCLUDE}/optixu
+                     ${CMAKE_SOURCE_DIR}/support/mdl-sdk/include
+                     ${CMAKE_SOURCE_DIR}
+                     ${CMAKE_SOURCE_DIR}/cuda
+                     ${CUDA_INCLUDE_DIRS} )
+
+include(FindSUtilGLUT.cmake)
+
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/support/mdl-sdk/include/mi/mdl_sdk.h)
+  # The MDL_SDK wrapper library can only be built when the MDL SDK is available
+  add_subdirectory(mdl_wrapper)
+  set(USE_OWN_MDL_WRAPPER TRUE)
+else()
+  include(FindMDLWrapper.cmake)
+endif()
+
+set(SAMPLES_CUDA_DIR ${CMAKE_CURRENT_SOURCE_DIR}/cuda)
+
+include_directories("${CMAKE_SOURCE_DIR}/include")
+
+function(OPTIX_add_sample_executable target_name)
+
+  # These calls will group PTX and CUDA files into their own directories in the Visual
+  # Studio projects.
+  if (NOT CUDA_NVRTC_ENABLED)
+    source_group("PTX Files"  REGULAR_EXPRESSION ".+\\.ptx$")
+  endif()
+  source_group("CUDA Files" REGULAR_EXPRESSION ".+\\.cu$")
+
+  # Separate the sources from the CMake and CUDA options fed to the macro.  This code
+  # comes from the CUDA_COMPILE_PTX macro found in FindCUDA.cmake.  We are copying the
+  # code here, so that we can use our own name for the target.  target_name is used in the
+  # creation of the output file names, and we want this to be unique for each target in
+  # the SDK.
+  CUDA_GET_SOURCES_AND_OPTIONS(source_files cmake_options options ${ARGN})
+
+  if (CUDA_NVRTC_ENABLED)
+
+    # Isolate OBJ target files. NVCC should only process these files and leave PTX targets for NVRTC
+    set(cu_obj_source_files)
+    foreach(file ${source_files})
+      get_source_file_property(_cuda_source_format ${file} CUDA_SOURCE_PROPERTY_FORMAT)
+      if(${_cuda_source_format} MATCHES "OBJ")
+        list(APPEND cu_obj_source_files ${file})
+      endif()
+    endforeach()
+
+    # Create the rules to build the OBJ from the CUDA files.
+    CUDA_WRAP_SRCS( ${target_name} OBJ generated_files ${cu_obj_source_files} ${cmake_options} OPTIONS ${options} )
+  else()
+
+    # Create the rules to build the PTX and OBJ from the CUDA files.
+    CUDA_WRAP_SRCS( ${target_name} PTX generated_files ${source_files} ${cmake_options} OPTIONS ${options} )
+  endif()
+
+
+  # Here is where we create the rule to make the executable.  We define a target name and
+  # list all the source files used to create the target.  In addition we also pass along
+  # the cmake_options parsed out of the arguments.
+  add_executable(${target_name}
+    ${source_files}
+    ${generated_files}
+    ${cmake_options}
+    )
+
+  # Most of the samples link against the sutil library and the optix library.  Here is the
+  # rule that specifies this linkage.
+  target_link_libraries( ${target_name}
+    sutil_sdk
+    optix
+    ${optix_rpath}
+    )
+
+  if( UNIX AND NOT APPLE )
+    # Force using RPATH instead of RUNPATH on Debian
+    target_link_libraries( ${target_name} "-Wl,--disable-new-dtags" )
+  endif()
+
+  if(USING_GNU_CXX)
+    target_link_libraries( ${target_name} m ) # Explicitly link against math library (C samples don't do that by default)
+  endif()
+endfunction()
+
+add_subdirectory(sutil)

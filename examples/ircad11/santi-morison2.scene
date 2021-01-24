@@ -45,7 +45,7 @@
       "sigma": 0.24,
       "specularity": 1.0,
       "shininess":1000000,
-      "thickness":0.0
+      "thickness":0.1
     },
     {
       "name": "BONE",
@@ -89,7 +89,7 @@
       "sigma": 0.3,
       "specularity": 1.0,
       "shininess":1000000,
-      "thickness":0.0
+      "thickness":0.1
     },
     {
       "name": "SUPRARRENAL",

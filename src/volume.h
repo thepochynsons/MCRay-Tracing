@@ -3,6 +3,8 @@
 
 #include <array>
 #include <random>
+#include <iostream>
+#include <math.h>
 
 
 /**
@@ -54,7 +56,6 @@ public:
         const unsigned int z = static_cast<unsigned int>(z_millis / resolution) % size;
 
         const auto & voxel = matrix[x][y][z];
-
         return voxel.scattering_probability >= scattering_density ?
                     voxel.texture_noise * scattering_sigma + scattering_mu :
                     0.0f;

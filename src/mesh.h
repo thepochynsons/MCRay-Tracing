@@ -3,6 +3,7 @@
 
 #include <string>
 #include <array>
+#include <optixpp_namespace.h>
 
 struct material
 {
@@ -15,8 +16,8 @@ struct mesh
     const bool is_rigid, is_vascular;
     const std::array<float,3> deltas;
     const bool outside_normals;
-    const material & material_inside;
-    const material & material_outside;
+    const optix::Material & material_inside;
+    const optix::Material & material_outside;
 };
 
 #endif // MESH_H

@@ -1,0 +1,38 @@
+Stacks de optix::float4 en raygen.
+	impedance_attenuation stack
+		x --> impedance
+		y --> attenuation
+		z --> vacio
+		w --> index
+	mu_sigma stack
+		x --> mu0
+		y --> mu1
+		z --> sigma
+		w --> index
+
+Hacer chequeo de vascularidades de Santi para decidir a que material me voy.
+Definir tamaño maximo de los Stack. En los ejemplos usan 4, pero depende de la cantidad de anidamientos que uno tenga.
+Usar stackId =-1 para discernir si quedan objetos.
+
+Una vez terminado, ver si conviene eso o usar el "outsideMaterial"
+
+f 2298//2298 1783//1783 3710//3710
+
+
+si prd.vascular:
+	si el mesh es vascular:
+		vuelvo al material de afuera --> deberia estar en la pila
+	si no:
+		sigo con parametros de prd
+		actualizo material de afuera con los parametros del que choco --> en la pila
+si no:
+	si el mesh es vascular
+		actualizo prd
+		actualizo material de afuera con los parametros en la prd --> en la pila
+	si no:
+		si choque el mismo mesh:
+			uso parametros del mesh (serian los mismos que hay en el prd?)
+			voy al mesh anterior --> en la pila?
+		si no:
+			voy uso parametros del prd
+			actualizo prd con parametros del mesh

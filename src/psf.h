@@ -81,14 +81,14 @@ private:
     {
         using namespace std;
 
-        return exp(-0.5f*(pow(x,2)/var_x))*cos(2*M_PI*freq*x);
+        return exp(-0.5f*(x*x/var_x))*cos(2*M_PI*freq*x);
     }
 
     float lateral_function(const float y) const
     {
         using namespace std;
 
-        return exp(-0.5f*(pow(y,2)/var_y));
+        return exp(-0.5f*(y*y/var_y));
     }
 
     const float var_x, var_y, var_z;
